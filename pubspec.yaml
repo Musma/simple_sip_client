@@ -1,3 +1,4 @@
+# This is a Flutter plugin pubspec file.
 name: simple_sip_client
 description: A Flutter plugin for SIP paging from Windows clients.
 version: 1.0.0
