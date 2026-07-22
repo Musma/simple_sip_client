@@ -1,23 +1,26 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:simple_sip_client/simple_sip_client.dart';
 
 import '../config/sip_settings.dart';
-import 'multi_speaker_paging_page.dart';
-import 'speaker_paging_app.dart';
 
-class ContinuousSpeakerPagingPage extends StatefulWidget {
-  const ContinuousSpeakerPagingPage({super.key});
+class MultiSpeakerPagingPage extends StatefulWidget {
+  const MultiSpeakerPagingPage({super.key});
+
+  static const routeName = '/multi-paging';
 
   @override
-  State<ContinuousSpeakerPagingPage> createState() =>
-      _ContinuousSpeakerPagingPageState();
+  State<MultiSpeakerPagingPage> createState() => _MultiSpeakerPagingPageState();
 }
 
-class _ContinuousSpeakerPagingPageState
-    extends State<ContinuousSpeakerPagingPage> {
-  final _client = SipPagingClient(config: sipConfig);
+class _MultiSpeakerPagingPageState extends State<MultiSpeakerPagingPage> {
+  final _client = SipMultiPagingClient(config: sipConfig);
+  final _selectedExtensions = speakerTargets.values.toSet();
   final _logs = <String>[];
-  SipPagingSession? _session;
+
+  StreamSubscription<String>? _eventSubscription;
+  SipMultiPagingSession? _session;
   Codec _codec = Codec.pcma;
   bool _busy = false;
   bool _registered = false;
@@ -27,17 +30,15 @@ class _ContinuousSpeakerPagingPageState
   @override
   void initState() {
     super.initState();
-    _client.events.stream.listen(_log);
+    _eventSubscription = _client.events.stream.listen(_log);
     WidgetsBinding.instance.addPostFrameCallback((_) => _register());
   }
 
   @override
   void dispose() {
-    final session = _session;
-    if (session != null) {
-      session.stop();
-    }
-    _client.dispose();
+    unawaited(_eventSubscription?.cancel());
+    unawaited(_session?.stop());
+    unawaited(_client.dispose());
     super.dispose();
   }
 
@@ -65,20 +66,39 @@ class _ContinuousSpeakerPagingPageState
     if (mounted) setState(() {});
   });
 
-  Future<void> _startPaging(String label, String extension) => _run(() async {
-    final session = await _client.startPageExtension(
-      label: label,
-      extension: extension,
+  Future<void> _startPaging() => _run(() async {
+    final targets = speakerTargets.entries
+        .where((entry) => _selectedExtensions.contains(entry.value))
+        .map(
+          (entry) => SipPagingTarget(label: entry.key, extension: entry.value),
+        )
+        .toList();
+
+    final session = await _client.startPageExtensions(
+      targets: targets,
       codec: _codec,
     );
     _session = session;
+    _log(
+      'Started ${session.connectedTargets.length}/${targets.length} speaker(s)',
+    );
+    for (final failure in session.failedTargets) {
+      _log(
+        'SKIPPED ${failure.target.label} '
+        '(${failure.target.extension}): ${failure.error}',
+      );
+    }
     if (mounted) setState(() {});
-    session.completed.whenComplete(() {
-      if (!mounted) return;
-      setState(() {
-        if (identical(_session, session)) _session = null;
-      });
-    });
+
+    unawaited(
+      session.completed.then(
+        (_) => _clearCompletedSession(session),
+        onError: (Object error, StackTrace stackTrace) {
+          _log('STREAM ERROR: $error');
+          _clearCompletedSession(session);
+        },
+      ),
+    );
   });
 
   Future<void> _stopPaging() async {
@@ -89,10 +109,34 @@ class _ContinuousSpeakerPagingPageState
     await session.stop();
   }
 
+  void _clearCompletedSession(SipMultiPagingSession session) {
+    if (!mounted || !identical(_session, session)) return;
+    setState(() => _session = null);
+  }
+
+  void _toggleTarget(String extension, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedExtensions.add(extension);
+      } else {
+        _selectedExtensions.remove(extension);
+      }
+    });
+  }
+
+  void _selectAll(bool selected) {
+    setState(() {
+      _selectedExtensions.clear();
+      if (selected) _selectedExtensions.addAll(speakerTargets.values);
+    });
+  }
+
   void _log(String message) {
     final now = DateTime.now();
     final stamp =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+        '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}:'
+        '${now.second.toString().padLeft(2, '0')}';
     if (!mounted) return;
     setState(() {
       _logs.insert(0, '[$stamp] $message');
@@ -104,26 +148,8 @@ class _ContinuousSpeakerPagingPageState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SIP Continuous Paging'),
+        title: const Text('SIP Multi-speaker Paging'),
         actions: [
-          TextButton.icon(
-            onPressed: _busy
-                ? null
-                : () => Navigator.of(
-                    context,
-                  ).pushNamed(MultiSpeakerPagingPage.routeName),
-            icon: const Icon(Icons.speaker_group_outlined),
-            label: const Text('Multi'),
-          ),
-          TextButton.icon(
-            onPressed: _busy
-                ? null
-                : () => Navigator.of(
-                    context,
-                  ).pushNamed(TimedSpeakerPagingPage.routeName),
-            icon: const Icon(Icons.timer_outlined),
-            label: const Text('Timed'),
-          ),
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Center(
@@ -149,7 +175,7 @@ class _ContinuousSpeakerPagingPageState
                 ? Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SizedBox(width: 400, child: controls),
+                      SizedBox(width: 420, child: controls),
                       const SizedBox(width: 24),
                       Expanded(child: logs),
                     ],
@@ -168,7 +194,11 @@ class _ContinuousSpeakerPagingPageState
   }
 
   Widget _buildControls() {
+    final allSelected =
+        _selectedExtensions.length == speakerTargets.length &&
+        speakerTargets.isNotEmpty;
     final activeSession = _session;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -211,25 +241,45 @@ class _ContinuousSpeakerPagingPageState
               : (value) => setState(() => _codec = value.first),
         ),
         const SizedBox(height: 18),
-        if (activeSession != null) ...[
+        Row(
+          children: [
+            Text('Speakers', style: Theme.of(context).textTheme.titleMedium),
+            const Spacer(),
+            TextButton(
+              onPressed: _busy || _streaming
+                  ? null
+                  : () => _selectAll(!allSelected),
+              child: Text(allSelected ? 'Clear all' : 'Select all'),
+            ),
+          ],
+        ),
+        for (final target in speakerTargets.entries)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(target.key),
+            subtitle: Text('Extension ${target.value}'),
+            value: _selectedExtensions.contains(target.value),
+            onChanged: _busy || _streaming
+                ? null
+                : (selected) => _toggleTarget(target.value, selected ?? false),
+          ),
+        const SizedBox(height: 12),
+        if (activeSession != null)
           FilledButton.icon(
             onPressed: _busy ? null : () => _run(_stopPaging),
             icon: const Icon(Icons.stop),
-            label: Text('Stop ${activeSession.label}'),
-          ),
-        ] else ...[
-          for (final target in speakerTargets.entries)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: FilledButton.icon(
-                onPressed: _busy || !_registered
-                    ? null
-                    : () => _startPaging(target.key, target.value),
-                icon: const Icon(Icons.mic),
-                label: Text('Start ${target.key} (${target.value})'),
-              ),
+            label: Text(
+              'Stop ${activeSession.connectedTargets.length} speaker(s)',
             ),
-        ],
+          )
+        else
+          FilledButton.icon(
+            onPressed: _busy || !_registered || _selectedExtensions.isEmpty
+                ? null
+                : _startPaging,
+            icon: const Icon(Icons.mic),
+            label: Text('Start ${_selectedExtensions.length} speaker(s)'),
+          ),
         if (_busy)
           const Padding(
             padding: EdgeInsets.only(top: 10),
@@ -248,19 +298,17 @@ class _ContinuousSpeakerPagingPageState
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: _logs.length,
-        itemBuilder: (context, index) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: SelectableText(
-              _logs[index],
-              style: const TextStyle(
-                color: Color(0xffd1d5db),
-                fontFamily: 'Consolas',
-                fontSize: 13,
-              ),
+        itemBuilder: (context, index) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: SelectableText(
+            _logs[index],
+            style: const TextStyle(
+              color: Color(0xffd1d5db),
+              fontFamily: 'Consolas',
+              fontSize: 13,
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }

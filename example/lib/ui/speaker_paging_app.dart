@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'continuous_speaker_paging_page.dart';
+import 'multi_speaker_paging_page.dart';
 import 'speaker_paging_page.dart';
 
 class SpeakerPagingApp extends StatelessWidget {
@@ -18,6 +19,7 @@ class SpeakerPagingApp extends StatelessWidget {
       home: const ContinuousSpeakerPagingPage(),
       routes: {
         TimedSpeakerPagingPage.routeName: (_) => const SpeakerPagingPage(),
+        MultiSpeakerPagingPage.routeName: (_) => const MultiSpeakerPagingPage(),
       },
     );
   }
