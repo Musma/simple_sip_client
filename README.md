@@ -44,11 +44,11 @@ import 'package:simple_sip_client/simple_sip_client.dart';
 
 ```dart
 const config = SipConfig(
-  server: '192.168.5.100',
+  server: '192.168.x.x',
   port: 5060,
-  username: 'control-pc-1',
+  username: 'username',
   password: 'password',
-  domain: '192.168.5.100',
+  domain: '192.168.y.y',
   microphoneGain: 2.5,
 );
 ```
@@ -68,11 +68,11 @@ import 'package:simple_sip_client/simple_sip_client.dart';
 
 final client = SipPagingClient(
   config: SipConfig(
-    server: '192.168.5.100',
+    server: '192.168.x.x',
     port: 5060,
-    username: 'control-pc-1',
+    username: 'username',
     password: 'password',
-    domain: '192.168.5.100',
+    domain: '192.168.y.y',
   ),
 );
 
